@@ -1,194 +1,301 @@
+# app.py
 import streamlit as st
 import random
-import matplotlib.pyplot as plt
+import secrets
 import time
+import matplotlib.pyplot as plt
+
 from daa_project import sieve, is_probable_prime
 from daa_1 import compare_algorithms
+from rsa_simulation import RSA  
 
-st.set_page_config(page_title="Prime Number Generator & Comparison", layout="wide")
+# Custom CSS for blueish buttons
+st.markdown("""
+<style>
+    /* All buttons - Blue theme */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #4fc3f7 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #5568d3 0%, #3ea9d8 100%);
+        box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+        transform: translateY(-2px);
+    }
+    
+    .stButton > button:active {
+        transform: translateY(0px);
+        box-shadow: 0 1px 2px rgba(102, 126, 234, 0.3);
+    }
+    
+    /* Primary buttons - Darker blue */
+    button[kind="primary"] {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    }
+    
+    button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%);
+    }
+</style>
+""", unsafe_allow_html=True)
 
-st.sidebar.title("🔢 Prime Number Toolkit")
-page = st.sidebar.radio("Navigate", ["Large Prime Generation", "AKS vs Miller–Rabin Comparison"])
+# -------------------------
+# Config + session defaults
+# -------------------------
+st.set_page_config(page_title="Cryptographic Prime Toolkit", layout="wide")
 
-# --- PAGE 1: Large Prime Generation (daa_project.py) ---
-if page == "Large Prime Generation":
-    st.title("🔹 Large Prime Generation (Miller–Rabin + Sieve)")
-    st.write("Generate, test, and analyze large prime numbers using the Sieve of Eratosthenes and Miller–Rabin algorithms.")
+# pages list (human-friendly labels)
+PAGES = [
+    "Large Prime Generation",
+    "AKS vs Miller–Rabin Comparison",
+    "RSA Simulation"
+]
 
-    st.subheader("1️⃣ Generate Base Primes")
-    st.write("Use the Sieve of Eratosthenes to pre-compute small primes for faster Miller–Rabin testing.")
+# initialize session_state keys
+st.session_state.setdefault("current_page", PAGES[0])
+st.session_state.setdefault("small_primes", [])
+st.session_state.setdefault("probable_primes", [])
+st.session_state.setdefault("rsa", None)
+st.session_state.setdefault("cipher", "")
 
-    limit_input = st.text_input("Enter limit for sieve generation (max 5,000,000):", "100000")
+# Sidebar navigation (keep in sync with session_state)
+# Compute index safely
+try:
+    idx = PAGES.index(st.session_state["current_page"])
+except Exception:
+    idx = 0
+page = st.sidebar.radio("Navigate", PAGES, index=idx)
+# update state when user selects from sidebar
+if page != st.session_state["current_page"]:
+    st.session_state["current_page"] = page
+    # no rerun here — we'll just continue rendering the chosen page
 
-    if st.button("Run Sieve"):
-        if not limit_input.strip():
-            st.error("⚠️ Please enter a number.")
-        elif not limit_input.isdigit():
-            st.error("❌ Invalid input! Only digits are allowed.")
+# Helper to programmatically navigate to a page and refresh UI
+def go_to(page_name: str):
+    st.session_state["current_page"] = page_name
+    st.rerun()   # refresh immediately so sidebar reflects change
+
+# -------------------------------
+# PAGE 1: Large Prime Generation
+# -------------------------------
+if st.session_state["current_page"] == "Large Prime Generation":
+    st.title("🔍 Prime Number Generation & Testing")
+    st.write("Generate primes (Sieve) and test numbers (Miller–Rabin). Primes are stored in memory for reuse.")
+
+    st.subheader("1 — Generate base primes (Sieve)")
+    limit_input = st.text_input("Sieve limit (max 5,000,000)", value="100000", key="sieve_limit")
+
+    if st.button("Run Sieve", key="run_sieve"):
+        if not limit_input.strip() or not limit_input.isdigit():
+            st.error("Please enter a valid integer limit (digits only).")
         else:
-            try:
-                limit = int(limit_input)
-                if limit < 1000:
-                    st.error("⚠️ Limit too small! Please enter ≥ 1,000.")
-                elif limit > 5_000_000:
-                    st.error("⚠️ Limit too large! Please enter ≤ 5,000,000.")
-                else:
-                    with st.spinner("Generating primes..."):
-                        start = time.perf_counter()
-                        small_primes = sieve(limit)
-                        elapsed = time.perf_counter() - start
-                        st.success(f"✅ Generated {len(small_primes)} primes up to {limit} in {elapsed:.6f} seconds.")
-                        st.session_state["small_primes"] = small_primes
-            except ValueError:
-                st.error("❌ Invalid input! Please enter a valid integer.")
-
+            limit = int(limit_input)
+            if limit < 1000:
+                st.error("Limit too small — use ≥ 1,000.")
+            elif limit > 5_000_000:
+                st.error("Limit too large — use ≤ 5,000,000.")
+            else:
+                with st.spinner("Running sieve..."):
+                    t0 = time.perf_counter()
+                    primes = sieve(limit)
+                    t1 = time.perf_counter()
+                    st.session_state["small_primes"] = primes
+                    st.success(f"Generated {len(primes)} primes in {t1 - t0:.4f} s")
 
     st.divider()
-    st.subheader("2️⃣ Miller–Rabin Prime Testing")
+    st.subheader("2 — Miller–Rabin testing (use generated primes)")
 
-    mode = st.radio("Choose mode:", ["Single Number", "Range", "Random Number"])
-
-    if "small_primes" not in st.session_state:
-        st.warning("⚠️ Please run the sieve first.")
+    if not st.session_state["small_primes"]:
+        st.warning("Run the sieve first to get a small-primes list.")
     else:
         small_primes = st.session_state["small_primes"]
+        mode = st.radio("Mode", ["Single Number", "Range", "Random Number"], key="mode_main")
 
-        # --- SINGLE NUMBER MODE ---
+        # Single number
         if mode == "Single Number":
-            user_input = st.text_input("Enter a number to test:")
-            if st.button("Check Primality"):
-                if not user_input.strip():
-                    st.error("⚠️ Please enter a number.")
-                elif not user_input.isdigit():
-                    st.error("❌ Invalid input! Only digits are allowed.")
+            n_str = st.text_input("Enter number to test", key="single_n")
+            if st.button("Test Number", key="btn_test_single"):
+                if not n_str.strip() or not n_str.isdigit():
+                    st.error("Enter a valid integer (digits only).")
                 else:
-                    try:
-                        n = int(user_input)
-                        if n > 10**10:
-                            st.error("⚠️ Number too large! Please enter ≤ 10¹⁰.")
-                        elif n < 2:
-                            st.error("⚠️ Please enter an integer ≥ 2.")
+                    n = int(n_str)
+                    if n < 2:
+                        st.error("Enter integer ≥ 2.")
+                    elif n > 10**10:
+                        st.error("Number too large — use ≤ 1e10.")
+                    else:
+                        t0 = time.perf_counter()
+                        res = is_probable_prime(n)
+                        t1 = time.perf_counter()
+                        if res:
+                            st.success(f"{n} → Probably prime (checked in {t1-t0:.6f}s)")
+                            if n not in st.session_state["probable_primes"]:
+                                st.session_state["probable_primes"].append(n)
                         else:
-                            start = time.perf_counter()
-                            is_prime = is_probable_prime(n)
-                            elapsed = time.perf_counter() - start
-                            st.write(f"🕒 Time taken: {elapsed:.8f} sec")
-                            if is_prime:
-                                st.success("✅ Probably Prime!")
-                            else:
-                                st.error("❌ Composite Number")
-                    except ValueError:
-                        st.error("❌ Invalid input! Please enter an integer.")
+                            st.error(f"{n} → Composite (checked in {t1-t0:.6f}s)")
 
-        # --- RANGE MODE ---
+        # Range
         elif mode == "Range":
-            start_str = st.text_input("Start of range:")
-            end_str = st.text_input("End of range:")
-            if st.button("Check Range"):
-                if not start_str.strip() or not end_str.strip():
-                    st.error("⚠️ Both fields are required.")
-                elif not (start_str.isdigit() and end_str.isdigit()):
-                    st.error("❌ Invalid input! Only digits allowed.")
+            start_s = st.text_input("Range start", key="range_start")
+            end_s = st.text_input("Range end", key="range_end")
+            if st.button("Check Range", key="btn_check_range"):
+                if not (start_s.isdigit() and end_s.isdigit()):
+                    st.error("Enter valid digits for start and end.")
                 else:
-                    try:
-                        start_range = int(start_str)
-                        end_range = int(end_str)
-                        if start_range > end_range:
-                            st.error("⚠️ Start cannot be greater than end.")
-                        elif end_range - start_range > 1_000_000:
-                            st.error("⚠️ Range too large! Please limit to ≤ 1 million numbers.")
-                        elif end_range > 10**10:
-                            st.error("⚠️ Range end too large! Please use numbers ≤ 10¹⁰.")
-                        else:
-                            start_time = time.perf_counter()
-                            results = []
-                            for num in range(start_range, end_range + 1):
-                                if all(num % p != 0 for p in small_primes if p < num):
-                                    if is_probable_prime(num):
-                                        results.append(num)
-                            elapsed = time.perf_counter() - start_time
-                            st.success(f"✅ Found {len(results)} probable primes in range. Took {elapsed:.6f} sec.")
-                            if results:
-                                st.text_area("Probable Primes", ", ".join(map(str, results)), height=150)
-                    except ValueError:
-                        st.error("❌ Invalid range values!")
+                    start_n = int(start_s); end_n = int(end_s)
+                    if start_n >= end_n:
+                        st.error("Start must be smaller than end.")
+                    elif end_n - start_n > 10000:
+                        st.error("Range too large; limit to 10,000 numbers")
+                    else:
+                        found = []
+                        with st.spinner("Testing range..."):
+                            t0 = time.perf_counter()
+                            for x in range(start_n, end_n+1):
+                                if all(x % p != 0 for p in small_primes if p < x):
+                                    if is_probable_prime(x):
+                                        found.append(x)
+                                        if x not in st.session_state["probable_primes"]:
+                                            st.session_state["probable_primes"].append(x)
+                            t1 = time.perf_counter()
+                        st.success(f"Found {len(found)} probable primes in {t1-t0:.4f}s")
+                        if found:
+                            st.text_area("Probable primes (scrollable)", ", ".join(map(str, found)), height=160)
 
-        # --- RANDOM NUMBER MODE ---
+        # Random number
         elif mode == "Random Number":
-            lower_str = st.text_input("Lower bound:")
-            upper_str = st.text_input("Upper bound:")
-            if st.button("Generate & Test"):
-                if not lower_str.strip() or not upper_str.strip():
-                    st.error("⚠️ Please enter both bounds.")
-                elif not (lower_str.isdigit() and upper_str.isdigit()):
-                    st.error("❌ Invalid input! Only digits allowed.")
+            lo = st.text_input("Lower bound", key="rand_lo")
+            hi = st.text_input("Upper bound", key="rand_hi")
+            if st.button("Generate & Test", key="btn_rand_test"):
+                if not (lo.isdigit() and hi.isdigit()):
+                    st.error("Enter digits only.")
                 else:
-                    try:
-                        lower = int(lower_str)
-                        upper = int(upper_str)
-                        if lower >= upper:
-                            st.error("⚠️ Lower bound must be smaller than upper bound.")
-                        elif upper > 10**10:
-                            st.error("⚠️ Upper bound too large! Use ≤ 10¹⁰.")
+                    l, h = int(lo), int(hi)
+                    if l >= h:
+                        st.error("Lower must be < Upper.")
+                    else:
+                        n = random.randint(l, h)
+                        st.info(f"Testing random number {n} ...")
+                        t0 = time.perf_counter()
+                        r = is_probable_prime(n)
+                        t1 = time.perf_counter()
+                        if r:
+                            st.success(f"{n} → Probably prime ({t1-t0:.6f}s)")
+                            if n not in st.session_state["probable_primes"]:
+                                st.session_state["probable_primes"].append(n)
                         else:
-                            random_num = random.randint(lower, upper)
-                            start = time.perf_counter()
-                            result = is_probable_prime(random_num)
-                            elapsed = time.perf_counter() - start
-                            st.info(f"🎲 Generated number: {random_num}")
-                            st.write(f"🕒 Time taken: {elapsed:.8f} sec")
-                            if result:
-                                st.success("✅ Probably Prime!")
-                            else:
-                                st.error("❌ Composite Number")
-                    except ValueError:
-                        st.error("❌ Invalid bounds!")
+                            st.error(f"{n} → Composite ({t1-t0:.6f}s)")
 
-# --- PAGE 2: AKS vs Miller–Rabin (daa_(1).py) ---
-elif page == "AKS vs Miller–Rabin Comparison":
+    # show quick RSA button only when primes available
+    if len(st.session_state["probable_primes"]) >= 2:
+        st.divider()
+        st.write("You have primes stored in memory.")
+        if st.button("Proceed to RSA Simulation (use generated primes)", key="goto_rsa"):
+            go_to("RSA Simulation")
+
+# ----------------------------
+# PAGE 2: AKS vs Miller–Rabin
+# ----------------------------
+elif st.session_state["current_page"] == "AKS vs Miller–Rabin Comparison":
     st.title("⚖️ AKS vs Miller–Rabin Algorithm Comparison")
-    st.write("Compare execution time and results between deterministic (AKS) and probabilistic (Miller–Rabin) primality tests.")
-
-    # --- Secure input field ---
-    user_input = st.text_input("Enter number to compare:")
-    repeats = st.slider("Repetitions for timing accuracy", 1, 10, 3)
-
-    if st.button("Compare Algorithms"):
-        # --- Input Validation ---
-        if not user_input.strip():
-            st.error("⚠️ Please enter a number before running the comparison.")
-        elif not user_input.isdigit():
-            st.error("❌ Invalid input! Please enter digits only (no spaces or symbols).")
+    num_s = st.text_input("Number to compare", key="comp_num")
+    repeats = st.slider("Repetitions", 1, 10, 3, key="comp_reps")
+    if st.button("Compare", key="btn_do_compare"):
+        if not num_s.isdigit():
+            st.error("Enter digits only.")
         else:
-            try:
-                n = int(user_input)
-                # You can tune this bound (e.g., 10^9)
-                if n > 10**10:
-                    st.error("⚠️ Number too large! Please enter a number ≤ 10¹⁰.")
-                elif n < 2:
-                    st.error("⚠️ Please enter an integer ≥ 2.")
+            n = int(num_s)
+            with st.spinner("Comparing..."):
+                total_mr = total_aks = 0.0
+                for _ in range(repeats):
+                    t_mr, t_aks = compare_algorithms(n)
+                    if t_mr is None or t_aks is None:
+                        st.error("Comparison not available for this number.")
+                        break
+                    total_mr += t_mr; total_aks += t_aks
                 else:
-                    with st.spinner("Running comparison..."):
-                        total_mr = total_aks = 0
-                        for _ in range(repeats):
-                            time_mr, time_aks = compare_algorithms(n)
-                            if time_mr is None or time_aks is None:
-                                st.error("⚠️ The number is not prime. Comparison skipped.")
-                                break
-                            total_mr += time_mr
-                            total_aks += time_aks
-                        else:
-                            avg_mr = total_mr / repeats
-                            avg_aks = total_aks / repeats
-                            st.success(f"✅ Comparison completed over {repeats} runs!")
-                            st.write(f"🕒 **Miller–Rabin (avg):** {avg_mr:.8f} seconds")
-                            st.write(f"🕒 **AKS (avg):** {avg_aks:.8f} seconds")
+                    avg_mr = total_mr / repeats; avg_aks = total_aks / repeats
+                    st.success("Comparison done")
+                    fig, ax = plt.subplots(figsize=(6,4))
+                    bars = ax.bar(["Miller–Rabin", "AKS"], [avg_mr, avg_aks], color=["#4fc3f7","#ff7043"])
+                    ax.set_ylabel("Time (s)")
+                    ax.set_title(f"Average runtimes for n={n}")
+                    for bar,val in zip(bars,[avg_mr,avg_aks]):
+                        ax.text(bar.get_x()+bar.get_width()/2, bar.get_height(), f"{val:.6f}s", ha="center", va="bottom")
+                    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+                    st.pyplot(fig)
 
-                            # Display comparison chart
-                            fig, ax = plt.subplots()
-                            ax.bar(["Miller–Rabin", "AKS"], [avg_mr, avg_aks], color=["skyblue", "salmon"])
-                            ax.set_ylabel("Execution Time (seconds)")
-                            ax.set_title(f"Average Comparison for n = {n}")
-                            st.pyplot(fig)
-            except ValueError:
-                st.error("❌ Invalid input! Please enter a valid integer.")
+# -------------------------
+# PAGE 3: RSA Simulation
+# -------------------------
+elif st.session_state["current_page"] == "RSA Simulation":
+    st.title("🔐 RSA Simulation")
+    st.write("Select two primes from memory or auto-select them.")
+
+    primes = st.session_state["probable_primes"]
+    # fallback to small_primes if probable_primes empty
+    if len(primes) < 2 and st.session_state["small_primes"]:
+        primes = st.session_state["small_primes"][:200]  # show a manageable slice
+
+    if len(primes) < 2:
+        st.warning("Not enough primes in memory. Go to 'Large Prime Generation' and generate primes.")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            p = st.selectbox("Select p", primes, key="rsa_p")
+        with col2:
+            q = st.selectbox("Select q", [x for x in primes if x != p], key="rsa_q")
+
+        if st.button("Generate RSA keys (from selected primes)", key="btn_rsa_from_selected"):
+            try:
+                rsa = RSA(int(p), int(q))
+                st.session_state["rsa"] = rsa
+                st.success("RSA keys created!")
+                st.write(f"Public (e,n): ({rsa.e}, {rsa.n})")
+                st.write(f"Private (d,n): ({rsa.d}, {rsa.n})")
+            except Exception as e:
+                st.error(f"Error generating RSA: {e}")
+
+        if st.button("Auto-select two primes and create RSA", key="btn_rsa_auto"):
+            # secure choice
+            if len(primes) >= 2:
+                p_auto = secrets.choice(primes)
+                q_auto = secrets.choice(primes)
+                while q_auto == p_auto:
+                    q_auto = secrets.choice(primes)
+                try:
+                    rsa = RSA(int(p_auto), int(q_auto))
+                    st.session_state["rsa"] = rsa
+                    st.success(f"Auto-created RSA (p={p_auto}, q={q_auto})")
+                    st.write(f"Public (e,n): ({rsa.e}, {rsa.n})")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    # Encrypt / Decrypt UI
+    if st.session_state.get("rsa"):
+        rsa_obj = st.session_state["rsa"]
+        st.divider()
+        st.subheader("Encrypt / Decrypt")
+        plain = st.text_input("Plaintext (alphanumeric):", key="rsa_plain")
+        if st.button("Encrypt message", key="btn_encrypt_msg"):
+            try:
+                cipher_text = rsa_obj.encrypt(plain)
+                st.session_state["cipher"] = cipher_text
+                st.success("Encrypted (stored in session).")
+                st.text_area("Ciphertext:", cipher_text, height=120)
+            except Exception as e:
+                st.error(f"Encrypt error: {e}")
+
+        cipher_in = st.text_area("Ciphertext to decrypt (or leave default stored):", value=st.session_state.get("cipher",""), height=120, key="rsa_cipher_in")
+        if st.button("Decrypt message", key="btn_decrypt_msg"):
+            try:
+                dec = rsa_obj.decrypt(cipher_in)
+                st.success(f"Decrypted: {dec}")
+            except Exception as e:
+                st.error(f"Decrypt error: {e}")

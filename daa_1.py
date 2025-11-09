@@ -91,14 +91,14 @@ def compare_algorithms(n):
         return None, None
 
     # Miller–Rabin
-    start = time.time()
+    start = time.perf_counter()
     result_mr = miller_rabin_test(n)
-    time_mr = time.time() - start
+    time_mr = time.perf_counter() - start
 
     # AKS
-    start = time.time()
+    start = time.perf_counter()
     result_aks = aks_test(n)
-    time_aks = time.time() - start
+    time_aks = time.perf_counter() - start
 
     # Show Results
     print(f"\nMiller–Rabin Result : {'Prime' if result_mr else 'Composite'}")
