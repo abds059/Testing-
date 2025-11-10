@@ -204,6 +204,7 @@ if st.session_state["current_page"] == "Large Prime Generation":
 # ----------------------------
 elif st.session_state["current_page"] == "AKS vs Miller–Rabin Comparison":
     st.title("⚖️ AKS vs Miller–Rabin Algorithm Comparison")
+    st.write("Enter a prime number to check and perform comparision of miller-rabbin and aks algorithms")
     num_s = st.text_input("Number to compare", key="comp_num")
     repeats = st.slider("Repetitions", 1, 10, 3, key="comp_reps")
     if st.button("Compare", key="btn_do_compare"):
