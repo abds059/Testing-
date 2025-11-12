@@ -129,7 +129,7 @@ if st.session_state["current_page"] == "Large Prime Generation":
                         st.error("Enter integer ≥ 2.")
                     elif n > 10**10:
                         st.error("Number too large — use ≤ 1e10.")
-                    else:
+                    else:   
                         t0 = time.perf_counter()
                         res = is_probable_prime(n)
                         t1 = time.perf_counter()
